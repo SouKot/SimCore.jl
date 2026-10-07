@@ -18,6 +18,8 @@ Simulation models in operations research, industrial engineering, and queueing t
 3. **Streaming Statistics (`StatsPipeline`)**: Online calculation of numerical moments, quantiles, and warmup convergence in $O(1)$ memory without storing raw trajectory histories.
 4. **Hardware Acceleration Boundaries**: Explicit delineation between sequential discrete-event logic (CPU) and vectorized statistical reductions (GPU/SIMD).
 
+`SimCore.jl` serves as the foundational substrate for higher-level domain packages, including [`SimDES.jl`](https://github.com/SouKot/SimDES.jl) (discrete-event queueing networks, Little's Law verification, and physical conveyor accumulation).
+
 ---
 
 ## 2. Mathematical & Algorithmic Specifications
