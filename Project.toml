@@ -1,6 +1,7 @@
 name = "SimCore"
 uuid = "0c356fe6-1c88-4cf8-b16c-a521627c3420"
-version = "1.0.0-DEV"
+version = "0.1.0"
+license = "AGPL-3.0-or-later"
 authors = ["Sourabh Kotnala <sauravkotnala@gmail.com>"]
 
 [deps]
