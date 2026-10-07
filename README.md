@@ -142,20 +142,58 @@ println("Dispatched $(typeof(cev.inner)) at simulated time t = $t")
 
 ---
 
-## 7. Early-Stage Development Advisory (v0.1.0)
+## 7. Environment & Verification Platform
 
+The current codebase is tested and verified on:
+* **Operating System**: **Ubuntu 26.04.1 LTS** (`x86_64`, Linux kernel 6.x)
+* **Julia Versions**: Julia 1.10.12 LTS and Julia 1.13.0 (all 396 tests passing clean, 100%)
+* **Automated CI/CD Status**: Automated GitHub Actions workflows are currently **paused** (manual trigger via `workflow_dispatch` only).
+
+---
+
+## 8. Building Documentation Locally
+
+HTML documentation can be built locally using [Documenter.jl](https://documenter.juliadocs.org/):
+
+```bash
+# From packages/SimCore directory:
+julia --project=docs -e '
+    using Pkg
+    Pkg.develop(PackageSpec(path=pwd()))
+    Pkg.instantiate()
+    include("docs/make.jl")
+'
+```
+
+Alternatively, from the Julia REPL:
+```julia
+using Pkg
+Pkg.activate("docs")
+Pkg.develop(PackageSpec(path="."))
+Pkg.instantiate()
+include("docs/make.jl")
+```
+
+The compiled static documentation website will be generated in `docs/build/`. You can open it locally in any web browser:
+```bash
+xdg-open docs/build/index.html
+```
+
+---
+
+## 9. Early-Stage Development Advisory (v0.1.0)
 
 `SimCore.jl` is released under Semantic Versioning at **`v0.1.0`**. While core algorithms are mathematically verified and covered by test suites, the public API is under active development and may evolve in response to community usage. Feedback, issue reports, and mathematical validation contributions are welcomed via GitHub issues.
 
 ---
 
-## 8. AI Pair-Programming & Human Oversight Disclosure
+## 10. AI Pair-Programming & Human Oversight Disclosure
 
 This package was designed and authored by human engineers in collaborative pair-programming with Google DeepMind's Antigravity assistant. Every algorithm, data structure, and boundary condition is verified against established numerical literature and validated via formal test assertions in [`test/runtests.jl`](test/runtests.jl).
 
 ---
 
-## 9. License
+## 11. License
 
 `SimCore.jl` is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE).
 

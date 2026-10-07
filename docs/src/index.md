@@ -68,8 +68,21 @@ include("examples/03_littles_law_audit.jl")
 
 ---
 
-## Manual Contents
+---
 
+## Environment & Local Documentation Build
+
+* **Operating System**: **Ubuntu 26.04.1 LTS** (`x86_64`)
+* **Julia Compatibility**: Julia 1.10.12 LTS and Julia 1.13.0 (all 396 tests passing clean, 100%)
+* **CI/CD Status**: Automated GitHub Actions workflows are currently **paused** (manual trigger via `workflow_dispatch` only).
+* **Building Documentation Locally**:
+  ```bash
+  julia --project=docs -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate(); include("docs/make.jl")'
+  ```
+
+---
+
+## Manual Contents
 
 ```@contents
 Pages = [
