@@ -28,7 +28,7 @@ KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 SimCoreGPUExt = ["AcceleratedKernels", "KernelAbstractions"]
 
 [compat]
-AcceleratedKernels = "0.1, 0.2, 0.3, 0.4"
+AcceleratedKernels = "0.1, 0.2, 0.3, 0.4, 0.5"
 DataStructures     = "0.18, 0.19"
 KernelAbstractions = "0.9"
 StaticArrays       = "1"
