@@ -43,7 +43,33 @@ This codebase was developed with the assistance of **Google DeepMind Antigravity
 
 ---
 
+## Runnable Verification Examples
+
+`SimCore.jl` provides 4 standalone examples in its `examples/` directory:
+
+| Script | Algorithmic Focus |
+| :--- | :--- |
+| `01_custom_event_loop.jl` | Minimal raw event dispatch loop with $O(1)$ lazy cancellation and speed throttling. |
+| `02_welch_warmup_detection.jl` | Numerical transient bias elimination via Welch's moving average. |
+| `03_littles_law_audit.jl` | Riemann time-average queue length vs $\lambda_{\text{eff}} W$ verified to 0.00% discrepancy. |
+| `04_gpu_acceleration_demo.jl` | Parallel array statistics reduction via `AcceleratedKernels.jl`. |
+
+### Running from the Terminal
+```bash
+julia --project=. examples/01_custom_event_loop.jl
+```
+
+### Running from the Julia REPL
+```julia
+using Pkg; Pkg.activate(".")
+include("examples/01_custom_event_loop.jl")
+include("examples/03_littles_law_audit.jl")
+```
+
+---
+
 ## Manual Contents
+
 
 ```@contents
 Pages = [

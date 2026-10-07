@@ -93,18 +93,69 @@ println("Estimated P95:     ", summary.W_p95)
 
 ---
 
-## 6. Early-Stage Development Advisory (v0.1.0)
+## 6. Running Examples & Interactive REPL Workflow
+
+`SimCore.jl` provides 4 standalone verification scripts in the [`examples/`](examples/) directory:
+
+| Script | Algorithmic Focus |
+| :--- | :--- |
+| [`01_custom_event_loop.jl`](examples/01_custom_event_loop.jl) | Minimal raw event dispatch loop with $O(1)$ lazy cancellation and speed throttling. |
+| [`02_welch_warmup_detection.jl`](examples/02_welch_warmup_detection.jl) | Numerical demonstration of transient bias elimination via Welch's moving average. |
+| [`03_littles_law_audit.jl`](examples/03_littles_law_audit.jl) | Riemann time-average queue length vs $\lambda_{\text{eff}} W$ verified to 0.00% discrepancy. |
+| [`04_gpu_acceleration_demo.jl`](examples/04_gpu_acceleration_demo.jl) | Hardware acceleration demonstration of parallel array reductions with `AcceleratedKernels.jl`. |
+
+### Running from the Command Line
+```bash
+julia --project=. examples/01_custom_event_loop.jl
+julia --project=. examples/03_littles_law_audit.jl
+```
+
+### Running from the Julia REPL
+```julia
+using Pkg
+Pkg.activate(".")
+
+# Run any example script directly
+include("examples/01_custom_event_loop.jl")
+include("examples/02_welch_warmup_detection.jl")
+include("examples/03_littles_law_audit.jl")
+```
+
+### Interactive REPL Stepping
+To schedule events and inspect time advancement step-by-step interactively in the REPL:
+```julia
+using SimCore
+using DataStructures: PriorityQueue, dequeue_pair!
+
+clock = SimClock(1.0) # Real-time throttled clock
+fel   = PriorityQueue{CancellableEvent, Float64}()
+
+# Schedule events
+ev1 = CancellableEvent(EntityArrival(UInt64(101), 1, 1.5), 1.5)
+push!(fel, ev1 => 1.5)
+
+# Step one event:
+cev, t = dequeue_pair!(fel)
+throttle!(clock, t)
+println("Dispatched $(typeof(cev.inner)) at simulated time t = $t")
+```
+
+---
+
+## 7. Early-Stage Development Advisory (v0.1.0)
+
 
 `SimCore.jl` is released under Semantic Versioning at **`v0.1.0`**. While core algorithms are mathematically verified and covered by test suites, the public API is under active development and may evolve in response to community usage. Feedback, issue reports, and mathematical validation contributions are welcomed via GitHub issues.
 
 ---
 
-## 7. AI Pair-Programming & Human Oversight Disclosure
+## 8. AI Pair-Programming & Human Oversight Disclosure
 
 This package was designed and authored by human engineers in collaborative pair-programming with Google DeepMind's Antigravity assistant. Every algorithm, data structure, and boundary condition is verified against established numerical literature and validated via formal test assertions in [`test/runtests.jl`](test/runtests.jl).
 
 ---
 
-## 8. License
+## 9. License
 
 `SimCore.jl` is licensed under the [GNU Affero General Public License v3.0 (AGPLv3)](LICENSE).
+
