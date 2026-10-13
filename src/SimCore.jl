@@ -1,7 +1,7 @@
 """
     SimCore
 
-Shared foundation for the Hermes/Antigravity simulation platform.
+Shared foundation for the Hermes simulation platform.
 
 Provides:
 - Abstract event hierarchy and cancellable event wrapper
