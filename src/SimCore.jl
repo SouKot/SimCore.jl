@@ -39,7 +39,8 @@ include("simviz_helpers.jl")
 # Events
 export SimEvent
 export EntityArrival, ProcessComplete, ResourceFailure, ScheduledChange,
-       TransferOut, NullEvent, CustomUserEvent
+       TransferOut, NullEvent, CustomUserEvent,
+       LoadingStart, LoadingComplete, UnloadingStart, UnloadingComplete
 export CancellableEvent, cancel!, next_event_id!, is_cancelled
 
 # Clock
@@ -70,7 +71,11 @@ export SimWorld, ZoneState, new_entity_id!,
        HookOpCode, HookCommand, PortCandidate, HookContext, with_hook_context,
        HelperFunctionMeta, HELPER_CATALOG, register_simviz_helper!, list_simviz_helpers,
        register_entity_handle!, register_port!, register_port_wire!,
-       get_attr, SimViz
+       get_attr, SimViz,
+       load_item!, unload_item!, unload_all!, is_loading, loaded_items, cargo_count, carrier_of,
+       bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
+       items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
+       pause_conveyor!, resume_conveyor!
 
 # Legacy stats (SimStats — retained for backward compat with SimViz)
 export SimStats, record_arrival!, record_departure!, record_queue_length!,

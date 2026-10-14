@@ -210,6 +210,10 @@ mutable struct SimWorld
     zone_setup_time        :: Dict{Tuple{Int, UInt64}, Float64}
     active_user_events     :: Dict{Int, Set{UInt64}}
     entity_type_templates  :: Dict{Symbol, Dict{String, Any}}
+    carrier_cargo          :: Dict{UInt64, Vector{UInt64}}
+    cargo_carrier          :: Dict{UInt64, UInt64}
+    token_bindings         :: Dict{UInt64, String}
+    active_loading         :: Dict{UInt64, Tuple{UInt64, Int, Float64}}
 end
 
 """
@@ -247,6 +251,10 @@ function SimWorld()
         Dict{Tuple{Int, UInt64}, Float64}(),
         Dict{Int, Set{UInt64}}(),
         Dict{Symbol, Dict{String, Any}}(),
+        Dict{UInt64, Vector{UInt64}}(),
+        Dict{UInt64, UInt64}(),
+        Dict{UInt64, String}(),
+        Dict{UInt64, Tuple{UInt64, Int, Float64}}(),
     )
 end
 

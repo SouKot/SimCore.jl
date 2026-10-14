@@ -150,6 +150,85 @@ deadlock by announcing the minimum future event time.
 struct NullEvent <: SimEvent end
 
 """
+    LoadingStart(carrier_id, item_id, station_id, time)
+
+An entity begins being loaded onto a carrier at a station or transfer berth.
+
+# Fields
+- `carrier_id::UInt64`: ID of the carrier agent or vehicle
+- `item_id::UInt64`: ID of the cargo entity being loaded
+- `station_id::Int`: zone ID of the loading station / transfer berth
+- `time::Float64`: scheduled simulated time of loading start
+"""
+struct LoadingStart <: SimEvent
+    carrier_id :: UInt64
+    item_id    :: UInt64
+    station_id :: Int
+    time       :: Float64
+    duration   :: Float64
+end
+LoadingStart(carrier_id::UInt64, item_id::UInt64, station_id::Int, time::Float64) =
+    LoadingStart(carrier_id, item_id, station_id, time, -1.0)
+
+"""
+    LoadingComplete(carrier_id, item_id, station_id, time)
+
+An entity completes being loaded onto a carrier at a station or transfer berth.
+
+# Fields
+- `carrier_id::UInt64`: ID of the carrier agent or vehicle
+- `item_id::UInt64`: ID of the cargo entity loaded
+- `station_id::Int`: zone ID of the loading station / transfer berth
+- `time::Float64`: scheduled simulated time of loading completion
+"""
+struct LoadingComplete <: SimEvent
+    carrier_id :: UInt64
+    item_id    :: UInt64
+    station_id :: Int
+    time       :: Float64
+end
+
+"""
+    UnloadingStart(carrier_id, item_id, station_id, time[, duration])
+
+An entity begins being unloaded from a carrier into a station or destination zone.
+
+# Fields
+- `carrier_id::UInt64`: ID of the carrier agent or vehicle
+- `item_id::UInt64`: ID of the cargo entity being unloaded
+- `station_id::Int`: destination zone ID
+- `time::Float64`: scheduled simulated time of unloading start
+- `duration::Float64`: service/handling duration (default -1.0: station default)
+"""
+struct UnloadingStart <: SimEvent
+    carrier_id :: UInt64
+    item_id    :: UInt64
+    station_id :: Int
+    time       :: Float64
+    duration   :: Float64
+end
+UnloadingStart(carrier_id::UInt64, item_id::UInt64, station_id::Int, time::Float64) =
+    UnloadingStart(carrier_id, item_id, station_id, time, -1.0)
+
+"""
+    UnloadingComplete(carrier_id, item_id, station_id, time)
+
+An entity completes being unloaded from a carrier into a station or destination zone.
+
+# Fields
+- `carrier_id::UInt64`: ID of the carrier agent or vehicle
+- `item_id::UInt64`: ID of the cargo entity unloaded
+- `station_id::Int`: destination zone ID
+- `time::Float64`: scheduled simulated time of unloading completion
+"""
+struct UnloadingComplete <: SimEvent
+    carrier_id :: UInt64
+    item_id    :: UInt64
+    station_id :: Int
+    time       :: Float64
+end
+
+"""
     CustomUserEvent(zone_id, element_id, tag, time[, payload, interval, callback])
 
 A user-scheduled event injected into the FutureEventList via `schedule_event!`,

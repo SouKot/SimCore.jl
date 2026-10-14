@@ -37,6 +37,11 @@ conveyor kinematics, custom DEVS event state machines, and telemetry.
     OP_TRIGGER_FAILURE    = 25
     OP_TRIGGER_REPAIR     = 26
     OP_FLUSH_QUEUE        = 27
+    OP_LOAD_ITEM          = 28
+    OP_UNLOAD_ITEM        = 29
+    OP_DIVERT_ITEM        = 30
+    OP_PAUSE_CONVEYOR     = 31
+    OP_RESUME_CONVEYOR    = 32
 end
 
 struct HookCommand
@@ -3266,6 +3271,284 @@ function log_event!(ctx::HookContext, message::AbstractString)
 end
 log_event!(message::AbstractString) = log_event!(current_ctx(), message)
 
+# ═════════════════════════════════════════════════════════════════════════════
+# Category 14: Carrier-Cargo, Token Binding & Conveyor Inspection (16)
+# ═════════════════════════════════════════════════════════════════════════════
+
+"""
+    load_item!([ctx,] carrier, item; duration=0.0, station=nothing) -> EntityHandle
+
+Initiate loading of `item` onto `carrier` at `station` (defaulting to current station).
+Buffers a `HookCommand(OP_LOAD_ITEM)` during hook execution, scheduling a `LoadingStart` event.
+"""
+function load_item!(ctx::HookContext, carrier, item; duration::Real=0.0, station=nothing)::EntityHandle
+    ch = _resolve_handle(ctx, carrier)
+    ih = _resolve_handle(ctx, item)
+    st_z = station === nothing ? ctx.zone_id : _resolve_zone_id(ctx, station)
+    push!(ctx.commands, HookCommand(OP_LOAD_ITEM; target_id=Int64(ch.id), int_arg=Int64(ih.id), float_arg=Float64(duration), float_arg2=Float64(st_z)))
+    return ch
+end
+load_item!(carrier, item; duration::Real=0.0, station=nothing) = load_item!(current_ctx(), carrier, item; duration=duration, station=station)
+load_item!(item; duration::Real=0.0, station=nothing) = load_item!(current_ctx(), self(current_ctx()), item; duration=duration, station=station)
+load_item!() = load_item!(current_ctx(), self(current_ctx()), item(current_ctx()))
+
+"""
+    unload_item!([ctx,] carrier, item; duration=0.0, destination=nothing) -> EntityHandle
+
+Initiate unloading of `item` from `carrier` into `destination` station or buffer.
+Buffers a `HookCommand(OP_UNLOAD_ITEM)` during hook execution, scheduling an `UnloadingStart` event.
+"""
+function unload_item!(ctx::HookContext, carrier, item; duration::Real=0.0, destination=nothing)::EntityHandle
+    ch = _resolve_handle(ctx, carrier)
+    ih = _resolve_handle(ctx, item)
+    dest_z = destination === nothing ? ctx.zone_id : _resolve_zone_id(ctx, destination)
+    push!(ctx.commands, HookCommand(OP_UNLOAD_ITEM; target_id=Int64(ch.id), int_arg=Int64(ih.id), float_arg=Float64(duration), float_arg2=Float64(dest_z)))
+    return ih
+end
+unload_item!(carrier, item; duration::Real=0.0, destination=nothing) = unload_item!(current_ctx(), carrier, item; duration=duration, destination=destination)
+unload_item!(item; duration::Real=0.0, destination=nothing) = unload_item!(current_ctx(), self(current_ctx()), item; duration=duration, destination=destination)
+
+"""
+    unload_all!([ctx,] [carrier=self()]; destination=nothing) -> Vector{EntityHandle}
+
+Unload all items currently loaded onto `carrier`.
+"""
+function unload_all!(ctx::HookContext, carrier=self(ctx); destination=nothing)::Vector{EntityHandle}
+    ch = _resolve_handle(ctx, carrier)
+    items = loaded_items(ctx, ch)
+    for it in items
+        unload_item!(ctx, ch, it; destination=destination)
+    end
+    return items
+end
+unload_all!(carrier; destination=nothing) = unload_all!(current_ctx(), carrier; destination=destination)
+unload_all!() = unload_all!(current_ctx(), self(current_ctx()))
+
+"""
+    is_loading([ctx,] [carrier=self()]) -> Bool
+
+Return `true` if `carrier` is currently in an active loading or unloading operation.
+"""
+function is_loading(ctx::HookContext, carrier=self(ctx))::Bool
+    ch = _resolve_handle(ctx, carrier)
+    return haskey(ctx.world.active_loading, UInt64(ch.id))
+end
+is_loading(carrier) = is_loading(current_ctx(), carrier)
+is_loading() = is_loading(current_ctx(), self(current_ctx()))
+
+"""
+    loaded_items([ctx,] [carrier=self()]) -> Vector{EntityHandle}
+
+Return the list of cargo item handles currently loaded on `carrier`.
+"""
+function loaded_items(ctx::HookContext, carrier=self(ctx))::Vector{EntityHandle}
+    ch = _resolve_handle(ctx, carrier)
+    uids = get(ctx.world.carrier_cargo, UInt64(ch.id), UInt64[])
+    return [EntityHandle(Int32(uid), UInt8(2)) for uid in uids]
+end
+loaded_items(carrier) = loaded_items(current_ctx(), carrier)
+loaded_items() = loaded_items(current_ctx(), self(current_ctx()))
+
+"""
+    cargo_count([ctx,] [carrier=self()]) -> Int
+
+Return the number of items currently loaded on `carrier`.
+"""
+function cargo_count(ctx::HookContext, carrier=self(ctx))::Int
+    ch = _resolve_handle(ctx, carrier)
+    return length(get(ctx.world.carrier_cargo, UInt64(ch.id), UInt64[]))
+end
+cargo_count(carrier) = cargo_count(current_ctx(), carrier)
+cargo_count() = cargo_count(current_ctx(), self(current_ctx()))
+
+"""
+    carrier_of([ctx,] [item=item()]) -> EntityHandle
+
+Return the handle of the carrier currently transporting `item`, or `INVALID_HANDLE` if not loaded.
+"""
+function carrier_of(ctx::HookContext, item=item(ctx))::EntityHandle
+    ih = _resolve_handle(ctx, item)
+    cid = get(ctx.world.cargo_carrier, UInt64(ih.id), UInt64(0))
+    cid == 0 && return INVALID_HANDLE
+    return EntityHandle(Int32(cid), UInt8(1))
+end
+carrier_of(item) = carrier_of(current_ctx(), item)
+carrier_of() = carrier_of(current_ctx(), item(current_ctx()))
+
+"""
+    bind_token!([ctx,] entity, key::AbstractString) -> EntityHandle
+
+Associate an identifier token or manifest tag string with `entity`.
+"""
+function bind_token!(ctx::HookContext, entity, key::AbstractString)::EntityHandle
+    h = _resolve_handle(ctx, entity)
+    ctx.world.token_bindings[UInt64(h.id)] = String(key)
+    return h
+end
+bind_token!(entity, key::AbstractString) = bind_token!(current_ctx(), entity, key)
+bind_token!(key::AbstractString) = bind_token!(current_ctx(), item(current_ctx()), key)
+
+"""
+    binding_key([ctx,] [entity=item()]) -> String
+
+Retrieve the string token or manifest tag bound to `entity`, or `""` if unbound.
+"""
+function binding_key(ctx::HookContext, entity=item(ctx))::String
+    h = _resolve_handle(ctx, entity)
+    return get(ctx.world.token_bindings, UInt64(h.id), "")
+end
+binding_key(entity) = binding_key(current_ctx(), entity)
+binding_key() = binding_key(current_ctx(), item(current_ctx()))
+
+"""
+    is_bound_to([ctx,] entity, key::AbstractString) -> Bool
+
+Return `true` if `entity` is bound to the token `key`.
+"""
+function is_bound_to(ctx::HookContext, entity, key::AbstractString)::Bool
+    return binding_key(ctx, entity) == String(key)
+end
+is_bound_to(entity, key::AbstractString) = is_bound_to(current_ctx(), entity, key)
+is_bound_to(key::AbstractString) = is_bound_to(current_ctx(), item(current_ctx()), key)
+
+"""
+    find_matching_item([ctx,] items, key::AbstractString) -> EntityHandle
+
+Find the first item in collection `items` bound to `key`, or `INVALID_HANDLE` if none match.
+"""
+function find_matching_item(ctx::HookContext, items, key::AbstractString)::EntityHandle
+    skey = String(key)
+    for it in items
+        h = _resolve_handle(ctx, it)
+        if binding_key(ctx, h) == skey
+            return h
+        end
+    end
+    return INVALID_HANDLE
+end
+find_matching_item(items, key::AbstractString) = find_matching_item(current_ctx(), items, key)
+
+"""
+    pull_matching_token!([ctx,] target_entity, key::AbstractString; in_port=:in_flow) -> EntityHandle
+
+Search connected upstream queues/conveyors wired to `in_port` for an item bound to `key`,
+pull it to `target_entity`, and return its handle (or `INVALID_HANDLE` if none waiting).
+"""
+function pull_matching_token!(ctx::HookContext, target_entity, key::AbstractString; in_port::Symbol=:in_flow)::EntityHandle
+    th = _resolve_handle(ctx, target_entity)
+    skey = String(key)
+    return pull_from_port_where!(ctx, in_port, c -> binding_key(ctx, c.item) == skey; scope=:all)
+end
+pull_matching_token!(target_entity, key::AbstractString; in_port::Symbol=:in_flow) =
+    pull_matching_token!(current_ctx(), target_entity, key; in_port=in_port)
+pull_matching_token!(key::AbstractString; in_port::Symbol=:in_flow) =
+    pull_matching_token!(current_ctx(), self(current_ctx()), key; in_port=in_port)
+
+"""
+    items_on_conveyor([ctx,] [conveyor=self()]) -> Vector{EntityHandle}
+
+Return all item handles currently on `conveyor`, ordered from outlet to inlet (closest to exit first).
+"""
+function items_on_conveyor(ctx::HookContext, conveyor=self(ctx))::Vector{EntityHandle}
+    h = _resolve_handle(ctx, conveyor)
+    zid = _resolve_zone_id(ctx, h)
+    zid <= 0 && return EntityHandle[]
+
+    res = Tuple{Float64, UInt64}[]
+    t = ctx.t
+    for (uid, k) in ctx.world.entity_kinematics
+        if k.zone_id == zid
+            dist = kinematics_distance(k, t)
+            push!(res, (dist, uid))
+        end
+    end
+    if haskey(ctx.world.zone_states, zid)
+        zs = ctx.world.zone_states[zid]
+        for uid in zs.queue
+            if !any(p -> p[2] == uid, res)
+                push!(res, (0.0, uid))
+            end
+        end
+    end
+    sort!(res, by = x -> x[1], rev = true)
+    return [EntityHandle(Int32(uid), UInt8(2)) for (_, uid) in res]
+end
+items_on_conveyor(conveyor) = items_on_conveyor(current_ctx(), conveyor)
+items_on_conveyor() = items_on_conveyor(current_ctx(), self(current_ctx()))
+
+"""
+    item_position_on_conveyor([ctx,] conveyor, [item=item()]) -> Float64
+
+Return the instantaneous arc-length distance `s` [m] of `item` along `conveyor`.
+"""
+function item_position_on_conveyor(ctx::HookContext, conveyor, item=item(ctx))::Float64
+    ih = _resolve_handle(ctx, item)
+    uid = UInt64(ih.id)
+    if haskey(ctx.world.entity_kinematics, uid)
+        return kinematics_distance(ctx.world.entity_kinematics[uid], ctx.t)
+    end
+    return 0.0
+end
+item_position_on_conveyor(conveyor, item) = item_position_on_conveyor(current_ctx(), conveyor, item)
+item_position_on_conveyor(conveyor) = item_position_on_conveyor(current_ctx(), conveyor, item(current_ctx()))
+
+"""
+    item_distance_to_outlet([ctx,] conveyor, [item=item()]) -> Float64
+
+Return remaining distance [m] from `item` to the outlet of `conveyor`.
+"""
+function item_distance_to_outlet(ctx::HookContext, conveyor, item=item(ctx))::Float64
+    ch = _resolve_handle(ctx, conveyor)
+    plen = path_length(ctx, ch)
+    pos = item_position_on_conveyor(ctx, ch, item)
+    return max(0.0, plen - pos)
+end
+item_distance_to_outlet(conveyor, item) = item_distance_to_outlet(current_ctx(), conveyor, item)
+item_distance_to_outlet(conveyor) = item_distance_to_outlet(current_ctx(), conveyor, item(current_ctx()))
+
+"""
+    divert_item!([ctx,] conveyor, item, destination) -> EntityHandle
+
+Divert `item` on `conveyor` to an alternate destination port or zone.
+"""
+function divert_item!(ctx::HookContext, conveyor, item, destination)::EntityHandle
+    ih = _resolve_handle(ctx, item)
+    dest_z = _resolve_zone_id(ctx, destination)
+    push!(ctx.commands, HookCommand(OP_DIVERT_ITEM; target_id=Int64(ih.id), int_arg=dest_z))
+    ctx.world.entity_route_overrides[UInt64(ih.id)] = dest_z
+    return ih
+end
+divert_item!(conveyor, item, destination) = divert_item!(current_ctx(), conveyor, item, destination)
+divert_item!(item, destination) = divert_item!(current_ctx(), self(current_ctx()), item, destination)
+
+"""
+    pause_conveyor!([ctx,] [conveyor=self()])
+
+Pause motor drive on `conveyor`.
+"""
+function pause_conveyor!(ctx::HookContext, conveyor=self(ctx))
+    ch = _resolve_handle(ctx, conveyor)
+    zid = _resolve_zone_id(ctx, ch)
+    zid > 0 && push!(ctx.commands, HookCommand(OP_PAUSE_CONVEYOR; target_id=zid))
+    return nothing
+end
+pause_conveyor!(conveyor) = pause_conveyor!(current_ctx(), conveyor)
+pause_conveyor!() = pause_conveyor!(current_ctx(), self(current_ctx()))
+
+"""
+    resume_conveyor!([ctx,] [conveyor=self()])
+
+Resume motor drive on `conveyor`.
+"""
+function resume_conveyor!(ctx::HookContext, conveyor=self(ctx))
+    ch = _resolve_handle(ctx, conveyor)
+    zid = _resolve_zone_id(ctx, ch)
+    zid > 0 && push!(ctx.commands, HookCommand(OP_RESUME_CONVEYOR; target_id=zid))
+    return nothing
+end
+resume_conveyor!(conveyor) = resume_conveyor!(current_ctx(), conveyor)
+resume_conveyor!() = resume_conveyor!(current_ctx(), self(current_ctx()))
+
 # ── Populate Helper Metadata Catalog ─────────────────────────────────────────
 
 function _init_simviz_helper_catalog!()
@@ -3467,6 +3750,26 @@ function _init_simviz_helper_catalog!()
     register_simviz_helper!(:record_histogram!, :telemetry, "record_histogram!([ctx,] name, sample) -> Float64", "Append sample to named custom histogram", "record_histogram!(:cycle_times, wait_time())")
     register_simviz_helper!(:record_tally!, :telemetry, "record_tally!([ctx,] name, sample) -> Float64", "Update running mean tally with sample", "record_tally!(:avg_wait, wait_time())")
     register_simviz_helper!(:log_event!, :telemetry, "log_event!([ctx,] message)", "Append timestamped message to simulation event log", "log_event!(\"Changeover triggered\")")
+
+    # Category 14: Carrier-Cargo, Token Binding & Conveyor Inspection (18)
+    register_simviz_helper!(:load_item!, :carrier_cargo, "load_item!([ctx,] carrier, item; duration=0.0, station=nothing) -> EntityHandle", "Initiate loading cargo item onto carrier", "load_item!(passenger, bag, duration=1.8)")
+    register_simviz_helper!(:unload_item!, :carrier_cargo, "unload_item!([ctx,] carrier, item; duration=0.0, destination=nothing) -> EntityHandle", "Initiate unloading cargo item from carrier", "unload_item!(cart, pallet)")
+    register_simviz_helper!(:unload_all!, :carrier_cargo, "unload_all!([ctx,] [carrier=self()]; destination=nothing) -> Vector{EntityHandle}", "Unload all cargo items from carrier", "unload_all!(cart)")
+    register_simviz_helper!(:is_loading, :carrier_cargo, "is_loading([ctx,] [carrier=self()]) -> Bool", "True if carrier is currently loading or unloading", "is_loading(passenger)")
+    register_simviz_helper!(:loaded_items, :carrier_cargo, "loaded_items([ctx,] [carrier=self()]) -> Vector{EntityHandle}", "List of cargo item handles currently carried", "bags = loaded_items(passenger)")
+    register_simviz_helper!(:cargo_count, :carrier_cargo, "cargo_count([ctx,] [carrier=self()]) -> Int", "Number of cargo items currently loaded on carrier", "n = cargo_count(passenger)")
+    register_simviz_helper!(:carrier_of, :carrier_cargo, "carrier_of([ctx,] [item=item()]) -> EntityHandle", "Handle of carrier holding item, or INVALID_HANDLE", "pax = carrier_of(bag)")
+    register_simviz_helper!(:bind_token!, :carrier_cargo, "bind_token!([ctx,] entity, key::AbstractString) -> EntityHandle", "Bind string token/manifest tag to entity", "bind_token!(bag, \"PAX_ALICE\")")
+    register_simviz_helper!(:binding_key, :carrier_cargo, "binding_key([ctx,] [entity=item()]) -> String", "Retrieve string token bound to entity", "tag = binding_key(bag)")
+    register_simviz_helper!(:is_bound_to, :carrier_cargo, "is_bound_to([ctx,] entity, key::AbstractString) -> Bool", "Check if entity is bound to specific token key", "if is_bound_to(bag, pax_tag); ...; end")
+    register_simviz_helper!(:find_matching_item, :carrier_cargo, "find_matching_item([ctx,] items, key::AbstractString) -> EntityHandle", "Find first item in collection matching key", "it = find_matching_item(cands, my_name)")
+    register_simviz_helper!(:pull_matching_token!, :carrier_cargo, "pull_matching_token!([ctx,] target_entity, key::AbstractString; in_port=:in_flow) -> EntityHandle", "Pull item matching token from upstream queues/conveyors", "pull_matching_token!(self(), my_tag)")
+    register_simviz_helper!(:items_on_conveyor, :carrier_cargo, "items_on_conveyor([ctx,] [conveyor=self()]) -> Vector{EntityHandle}", "All item handles on conveyor ordered outlet-to-inlet", "items = items_on_conveyor(carousel)")
+    register_simviz_helper!(:item_position_on_conveyor, :carrier_cargo, "item_position_on_conveyor([ctx,] conveyor, [item=item()]) -> Float64", "Instantaneous arc-length distance s [m] of item along conveyor", "s = item_position_on_conveyor(conv, bag)")
+    register_simviz_helper!(:item_distance_to_outlet, :carrier_cargo, "item_distance_to_outlet([ctx,] conveyor, [item=item()]) -> Float64", "Remaining distance [m] to conveyor outlet", "d = item_distance_to_outlet(conv, bag)")
+    register_simviz_helper!(:divert_item!, :carrier_cargo, "divert_item!([ctx,] conveyor, item, destination) -> EntityHandle", "Divert item on conveyor to alternate destination", "divert_item!(conv, bag, reject_bin)")
+    register_simviz_helper!(:pause_conveyor!, :carrier_cargo, "pause_conveyor!([ctx,] [conveyor=self()])", "Pause motor drive on conveyor", "pause_conveyor!(belt)")
+    register_simviz_helper!(:resume_conveyor!, :carrier_cargo, "resume_conveyor!([ctx,] [conveyor=self()])", "Resume motor drive on conveyor", "resume_conveyor!(belt)")
     return nothing
 end
 _init_simviz_helper_catalog!()
@@ -3569,7 +3872,12 @@ module SimViz
         # Category 13: Visuals, Randomness & Telemetry
         set_color!, set_mesh!, set_size!, set_label!, highlight!,
         sim_time, rng, rand_uniform, rand_exp, rand_normal, rand_triangular, rand_int, rand_choice, coin_flip,
-        record_metric!, increment_counter!, set_gauge!, record_histogram!, record_tally!, log_event!
+        record_metric!, increment_counter!, set_gauge!, record_histogram!, record_tally!, log_event!,
+        # Category 14: Carrier-Cargo, Token Binding & Conveyor Inspection
+        load_item!, unload_item!, unload_all!, is_loading, loaded_items, cargo_count, carrier_of,
+        bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
+        items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
+        pause_conveyor!, resume_conveyor!
 
     export EntityHandle, INVALID_HANDLE, EntityKinematics, PortDescriptor, PortWireLink,
         PortDirectory, UserTelemetryStore, EntityStateView,
@@ -3617,5 +3925,10 @@ module SimViz
         combine_entities!, split_entity!,
         set_color!, set_mesh!, set_size!, set_label!, highlight!,
         sim_time, rng, rand_uniform, rand_exp, rand_normal, rand_triangular, rand_int, rand_choice, coin_flip,
-        record_metric!, increment_counter!, set_gauge!, record_histogram!, record_tally!, log_event!
+        record_metric!, increment_counter!, set_gauge!, record_histogram!, record_tally!, log_event!,
+        # Category 14
+        load_item!, unload_item!, unload_all!, is_loading, loaded_items, cargo_count, carrier_of,
+        bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
+        items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
+        pause_conveyor!, resume_conveyor!
 end
