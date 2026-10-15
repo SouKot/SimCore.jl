@@ -155,7 +155,12 @@ mutable struct HybridSyncBuffers{A1<:AbstractVector{Bool},
     d_agent_zone       :: A4
     agent_slot_cache   :: IdDict{Any,Int}
     cached_agent_count :: Int
+    zone_queue_lengths :: Dict{Int32, Int}
+    zone_wait_times    :: Dict{Int32, Float64}
 end
+
+HybridSyncBuffers(flags::A1, departures::Vector{I}, in_service::A2, agent_free::A3, agent_zone::A4, slot_cache::IdDict{Any,Int}, cached_count::Int) where {A1, A2, A3, A4, I} =
+    HybridSyncBuffers(flags, departures, in_service, agent_free, agent_zone, slot_cache, cached_count, Dict{Int32, Int}(), Dict{Int32, Float64}())
 
 """
     HybridSyncBuffers(N::Int; id_type::Type{I}=Int32) -> HybridSyncBuffers
@@ -168,7 +173,7 @@ function HybridSyncBuffers(N::Int; id_type::Type{I}=Int32) where {I<:Integer}
     in_service = fill(false, N)
     agent_free = fill(false, N)
     agent_zone = fill(Int32(-1), N)
-    bufs = HybridSyncBuffers(flags, I[], in_service, agent_free, agent_zone, IdDict{Any,Int}(), 0)
+    bufs = HybridSyncBuffers(flags, I[], in_service, agent_free, agent_zone, IdDict{Any,Int}(), 0, Dict{Int32, Int}(), Dict{Int32, Float64}())
     return _assert_buffer_invariants!(bufs)
 end
 
@@ -214,6 +219,8 @@ function reset_sync_buffers!(bufs::HybridSyncBuffers)
     fill!(bufs.d_agent_zone, Int32(-1))
     empty!(bufs.agent_slot_cache)
     bufs.cached_agent_count = 0
+    empty!(bufs.zone_queue_lengths)
+    empty!(bufs.zone_wait_times)
     return bufs
 end
 
