@@ -3,7 +3,7 @@
 [![CI](https://github.com/SouKot/SimCore.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/SouKot/SimCore.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Documentation](https://img.shields.io/badge/docs-stable-blue.svg)](https://SouKot.github.io/SimCore.jl/stable/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](https://github.com/SouKot/SimCore.jl/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](https://github.com/SouKot/SimCore.jl/releases)
 
 **A minimal, zero-allocation simulation substrate in Julia providing discrete-event clocks, event scheduling, and online statistics.**
 
