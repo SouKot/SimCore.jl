@@ -33,6 +33,7 @@ include("analysis.jl")   # check_littles_law, batch_means_ci, replicate — uses
 include("stats.jl")      # SimStats (legacy) — must be defined before SimWorld
 include("world.jl")
 include("simviz_helpers.jl")
+include("tables/sim_table.jl")
 
 # ── Public API exports ────────────────────────────────────────────────────────
 
@@ -75,7 +76,11 @@ export SimWorld, ZoneState, new_entity_id!,
        load_item!, unload_item!, unload_all!, is_loading, loaded_items, cargo_count, carrier_of,
        bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
        items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
-       pause_conveyor!, resume_conveyor!
+       pause_conveyor!, resume_conveyor!,
+       SimTable, SimTableRow, nrows, ncols, rebuild_key_index!,
+       get_table, get_row, get_row_by_key, get_col, get_cell, set_cell!, add_row!,
+       to_matrix, find_rows, find_first, get_next_scheduled_row,
+       parse_csv_table, table_to_csv
 
 # Legacy stats (SimStats — retained for backward compat with SimViz)
 export SimStats, record_arrival!, record_departure!, record_queue_length!,
