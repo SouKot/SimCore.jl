@@ -52,10 +52,11 @@ export SimClock, throttle!, pause!, unpause!, set_speed!, step_once!, reset!,
 export DESAgent, CrowdAgent, FluidParticle, CrowdObstacle,
        width, height, center
 
-# Hybrid sync (Task 24 scaffolding)
+# Hybrid sync (Task 24 scaffolding & Phase P4 Fluid Sync)
 export HybridSyncConfig, ServiceZone, HybridSyncBuffers, HybridSyncState,
     AbstractSyncTransport, LocalSyncTransport,
-    validate_sync_config, reset_sync_buffers!, reset_sync_state!, sync_step!, mark_departure!
+    validate_sync_config, reset_sync_buffers!, reset_sync_state!, sync_step!, mark_departure!,
+    FluidSyncConfig, validate_fluid_sync_config, FluidSyncBuffers, reset_fluid_sync_buffers!
 
 # World & SimViz M-1
 export SimWorld, ZoneState, new_entity_id!,
@@ -77,6 +78,18 @@ export SimWorld, ZoneState, new_entity_id!,
        bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
        items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
        pause_conveyor!, resume_conveyor!,
+       # Category 15: ABM & Crowd Perception / Control
+       agent_position, agent_speed, agent_desired_speed, agent_goal, agent_visibility,
+       agent_fed, agent_in_smoke, set_agent_goal!, set_agent_speed!, trigger_evacuation!,
+       release_from_queue!, crowd_count, crowd_density,
+       # Category 16: Fire & Fluid Dynamics
+       fluid_temperature, smoke_extinction, fluid_velocity, fluid_visibility, fluid_co_ppm,
+       smoke_layer_height, is_tenable, set_fire_hrr!, extinguish_fire!, set_vent_flow!,
+       open_vent!, close_vent!, activate_suppression!,
+       # Category 17: Dynamic Visual Overlays & Viewport
+       set_agent_color!, show_agent_bubble!, show_agent_path!, set_fluid_colormap!,
+       set_smoke_opacity!, toggle_fluid_slice!, flash_alarm_beacon!, focus_camera_on!,
+       set_hud_banner!,
        SimTable, SimTableRow, nrows, ncols, rebuild_key_index!,
        get_table, get_row, get_row_by_key, get_col, get_cell, set_cell!, add_row!,
        to_matrix, find_rows, find_first, get_next_scheduled_row,

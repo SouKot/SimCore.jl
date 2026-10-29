@@ -42,6 +42,27 @@ conveyor kinematics, custom DEVS event state machines, and telemetry.
     OP_DIVERT_ITEM        = 30
     OP_PAUSE_CONVEYOR     = 31
     OP_RESUME_CONVEYOR    = 32
+    # Category 15: ABM & Crowd
+    OP_SET_AGENT_GOAL     = 33
+    OP_SET_AGENT_SPEED    = 34
+    OP_TRIGGER_EVACUATION = 35
+    OP_RELEASE_FROM_QUEUE = 36
+    # Category 16: Fire & Fluids
+    OP_SET_FIRE_HRR       = 37
+    OP_EXTINGUISH_FIRE    = 38
+    OP_SET_VENT_FLOW      = 39
+    OP_OPEN_VENT          = 40
+    OP_CLOSE_VENT         = 41
+    OP_ACTIVATE_SUPPRESSION = 42
+    # Category 17: Dynamic Visuals & Viewport
+    OP_SHOW_AGENT_BUBBLE  = 43
+    OP_SHOW_AGENT_PATH    = 44
+    OP_SET_FLUID_COLORMAP = 45
+    OP_SET_SMOKE_OPACITY  = 46
+    OP_TOGGLE_FLUID_SLICE = 47
+    OP_FLASH_ALARM_BEACON = 48
+    OP_FOCUS_CAMERA_ON    = 49
+    OP_SET_HUD_BANNER     = 50
 end
 
 struct HookCommand
@@ -3549,6 +3570,443 @@ end
 resume_conveyor!(conveyor) = resume_conveyor!(current_ctx(), conveyor)
 resume_conveyor!() = resume_conveyor!(current_ctx(), self(current_ctx()))
 
+# ============================================================================
+# Category 15: ABM & Crowd Perception / Control (:crowd)
+# ============================================================================
+
+"""
+    agent_position([ctx,] [agent=item()]) -> NTuple{3, Float64}
+
+Current 3D world coordinates (x, y, z) of the crowd agent.
+"""
+function agent_position(ctx::HookContext, agent=item(ctx))::NTuple{3, Float64}
+    return world_pos(ctx, agent)
+end
+agent_position(agent=item(current_ctx())) = agent_position(current_ctx(), agent)
+
+"""
+    agent_speed([ctx,] [agent=item()]) -> Float64
+
+Current walking speed magnitude [m/s] of the agent.
+"""
+function agent_speed(ctx::HookContext, agent=item(ctx))::Float64
+    return speed(ctx, agent)
+end
+agent_speed(agent=item(current_ctx())) = agent_speed(current_ctx(), agent)
+
+"""
+    agent_desired_speed([ctx,] [agent=item()]) -> Float64
+
+Base unhindered desired walking speed v0 [m/s] of the agent.
+"""
+function agent_desired_speed(ctx::HookContext, agent=item(ctx))::Float64
+    return num_attr(ctx, agent, :v0, 1.4)
+end
+agent_desired_speed(agent=item(current_ctx())) = agent_desired_speed(current_ctx(), agent)
+
+"""
+    agent_goal([ctx,] [agent=item()]) -> String
+
+Target element ID or waypoint coordinate the agent is currently navigating towards.
+"""
+function agent_goal(ctx::HookContext, agent=item(ctx))::String
+    return str_attr(ctx, agent, :goal, "")
+end
+agent_goal(agent=item(current_ctx())) = agent_goal(current_ctx(), agent)
+
+"""
+    agent_visibility([ctx,] [agent=item()]) -> Float64
+
+Effective visual range [m] through local smoke (via Jin's Law).
+"""
+function agent_visibility(ctx::HookContext, agent=item(ctx))::Float64
+    return num_attr(ctx, agent, :visibility, 30.0)
+end
+agent_visibility(agent=item(current_ctx())) = agent_visibility(current_ctx(), agent)
+
+"""
+    agent_fed([ctx,] [agent=item()]) -> Float64
+
+Cumulative Fractional Effective Dose (FED) toxic and thermal accumulation [0.0, 1.0].
+"""
+function agent_fed(ctx::HookContext, agent=item(ctx))::Float64
+    return num_attr(ctx, agent, :fed, 0.0)
+end
+agent_fed(agent=item(current_ctx())) = agent_fed(current_ctx(), agent)
+
+"""
+    agent_in_smoke([ctx,] [agent=item()]) -> Bool
+
+True if agent is currently immersed in smoke (extinction coefficient K >= 0.1 m^-1).
+"""
+function agent_in_smoke(ctx::HookContext, agent=item(ctx))::Bool
+    return smoke_extinction(ctx, agent) >= 0.1 || bool_attr(ctx, agent, :in_smoke, false)
+end
+agent_in_smoke(agent=item(current_ctx())) = agent_in_smoke(current_ctx(), agent)
+
+"""
+    set_agent_goal!([ctx,] [agent=item(),] target)
+
+Reroute agent immediately to target door, room, or waypoint.
+"""
+function set_agent_goal!(ctx::HookContext, agent, target)
+    h = _resolve_handle(ctx, agent)
+    push!(ctx.commands, HookCommand(OP_SET_AGENT_GOAL; target_id=h.id, str_arg=string(target)))
+    set_attr!(ctx, h, :goal, string(target))
+    return nothing
+end
+set_agent_goal!(agent, target) = set_agent_goal!(current_ctx(), agent, target)
+set_agent_goal!(target) = set_agent_goal!(current_ctx(), item(current_ctx()), target)
+
+"""
+    set_agent_speed!([ctx,] [agent=item(),] new_v0)
+
+Override base desired walking speed [m/s].
+"""
+function set_agent_speed!(ctx::HookContext, agent, new_v0::Real)
+    h = _resolve_handle(ctx, agent)
+    v = Float64(new_v0)
+    push!(ctx.commands, HookCommand(OP_SET_AGENT_SPEED; target_id=h.id, float_arg=v))
+    set_attr!(ctx, h, :v0, v)
+    return nothing
+end
+set_agent_speed!(agent, new_v0::Real) = set_agent_speed!(current_ctx(), agent, new_v0)
+set_agent_speed!(new_v0::Real) = set_agent_speed!(current_ctx(), item(current_ctx()), new_v0)
+
+"""
+    trigger_evacuation!([ctx,] zone_or_room; exit=nothing)
+
+Broadcast evacuation alarm to all agents in a room/zone, switching them to egress mode.
+"""
+function trigger_evacuation!(ctx::HookContext, zone_or_room; exit=nothing)
+    exit_str = exit === nothing ? "" : string(exit)
+    push!(ctx.commands, HookCommand(OP_TRIGGER_EVACUATION; str_arg=string(zone_or_room), any_arg=exit))
+    log_event!(ctx, "Evacuation alarm triggered in $(zone_or_room)")
+    return nothing
+end
+trigger_evacuation!(zone_or_room; exit=nothing) = trigger_evacuation!(current_ctx(), zone_or_room; exit=exit)
+
+"""
+    release_from_queue!([ctx,] [agent=item()])
+
+Immediately pull agent out of a stanchion line or waiting lounge.
+"""
+function release_from_queue!(ctx::HookContext, agent=item(ctx))
+    h = _resolve_handle(ctx, agent)
+    push!(ctx.commands, HookCommand(OP_RELEASE_FROM_QUEUE; target_id=h.id))
+    return nothing
+end
+release_from_queue!(agent=item(current_ctx())) = release_from_queue!(current_ctx(), agent)
+
+"""
+    crowd_count([ctx,] zone_or_room) -> Int
+
+Number of active agents currently inside a concourse, room, or corridor.
+"""
+function crowd_count(ctx::HookContext, zone_or_room)::Int
+    sym = Symbol("crowd_count_", zone_or_room)
+    ut = ctx.world.user_telemetry
+    return Int(round(get(ut.gauges, sym, 0.0)))
+end
+crowd_count(zone_or_room) = crowd_count(current_ctx(), zone_or_room)
+
+"""
+    crowd_density([ctx,] zone_or_room) -> Float64
+
+Occupant density [persons/m^2] in specified area.
+"""
+function crowd_density(ctx::HookContext, zone_or_room)::Float64
+    sym = Symbol("crowd_density_", zone_or_room)
+    ut = ctx.world.user_telemetry
+    return Float64(get(ut.gauges, sym, 0.0))
+end
+crowd_density(zone_or_room) = crowd_density(current_ctx(), zone_or_room)
+
+
+# ============================================================================
+# Category 16: Fire & Fluid Dynamics (:fluid)
+# ============================================================================
+
+"""
+    fluid_temperature([ctx,] [pos_or_elem=self()]) -> Float64
+
+Local gas temperature [K] at entity or spatial location.
+"""
+function fluid_temperature(ctx::HookContext, pos_or_elem=self(ctx))::Float64
+    if pos_or_elem isa EntityHandle || pos_or_elem isa Symbol || pos_or_elem isa String
+        h = _resolve_handle(ctx, pos_or_elem)
+        return num_attr(ctx, h, :temperature, 293.15)
+    end
+    return 293.15
+end
+fluid_temperature(pos_or_elem=self(current_ctx())) = fluid_temperature(current_ctx(), pos_or_elem)
+
+"""
+    smoke_extinction([ctx,] [pos_or_elem=self()]) -> Float64
+
+Light extinction coefficient K [m^-1] at entity or spatial location.
+"""
+function smoke_extinction(ctx::HookContext, pos_or_elem=self(ctx))::Float64
+    if pos_or_elem isa EntityHandle || pos_or_elem isa Symbol || pos_or_elem isa String
+        h = _resolve_handle(ctx, pos_or_elem)
+        return num_attr(ctx, h, :smoke_extinction, 0.0)
+    end
+    return 0.0
+end
+smoke_extinction(pos_or_elem=self(current_ctx())) = smoke_extinction(current_ctx(), pos_or_elem)
+
+"""
+    fluid_velocity([ctx,] [pos_or_elem=self()]) -> NTuple{3, Float64}
+
+Local airflow velocity vector (u, v, w) [m/s] at entity or spatial location.
+"""
+function fluid_velocity(ctx::HookContext, pos_or_elem=self(ctx))::NTuple{3, Float64}
+    return (0.0, 0.0, 0.0)
+end
+fluid_velocity(pos_or_elem=self(current_ctx())) = fluid_velocity(current_ctx(), pos_or_elem)
+
+"""
+    fluid_visibility([ctx,] [pos_or_elem=self()]) -> Float64
+
+Visual range [m] (V = 3.0 / K for illuminated emergency signage).
+"""
+function fluid_visibility(ctx::HookContext, pos_or_elem=self(ctx))::Float64
+    K = smoke_extinction(ctx, pos_or_elem)
+    return K <= 0.001 ? 30.0 : min(30.0, 3.0 / K)
+end
+fluid_visibility(pos_or_elem=self(current_ctx())) = fluid_visibility(current_ctx(), pos_or_elem)
+
+"""
+    fluid_co_ppm([ctx,] [pos_or_elem=self()]) -> Float64
+
+Carbon monoxide concentration [ppm] at entity or spatial location.
+"""
+function fluid_co_ppm(ctx::HookContext, pos_or_elem=self(ctx))::Float64
+    if pos_or_elem isa EntityHandle || pos_or_elem isa Symbol || pos_or_elem isa String
+        h = _resolve_handle(ctx, pos_or_elem)
+        return num_attr(ctx, h, :co_ppm, 0.0)
+    end
+    return 0.0
+end
+fluid_co_ppm(pos_or_elem=self(current_ctx())) = fluid_co_ppm(current_ctx(), pos_or_elem)
+
+"""
+    smoke_layer_height([ctx,] [domain="FluidDomain"]) -> Float64
+
+Elevation z [m] of the hot descending smoke ceiling layer.
+"""
+function smoke_layer_height(ctx::HookContext, domain="FluidDomain")::Float64
+    sym = Symbol("smoke_layer_height_", domain)
+    ut = ctx.world.user_telemetry
+    return Float64(get(ut.gauges, sym, 3.0))
+end
+smoke_layer_height(domain="FluidDomain") = smoke_layer_height(current_ctx(), domain)
+
+"""
+    is_tenable([ctx,] [pos_or_elem=self()]) -> Bool
+
+Life-safety check: true if T < 60°C (333.15 K), V >= 10 m, and FED < 0.1.
+"""
+function is_tenable(ctx::HookContext, pos_or_elem=self(ctx))::Bool
+    T = fluid_temperature(ctx, pos_or_elem)
+    V = fluid_visibility(ctx, pos_or_elem)
+    fed = agent_fed(ctx, pos_or_elem)
+    return T < 333.15 && V >= 10.0 && fed < 0.1
+end
+is_tenable(pos_or_elem=self(current_ctx())) = is_tenable(current_ctx(), pos_or_elem)
+
+"""
+    set_fire_hrr!([ctx,] burner, kw::Real)
+
+Dynamically ramp or throttle fire Heat Release Rate [kW].
+"""
+function set_fire_hrr!(ctx::HookContext, burner, kw::Real)
+    h = _resolve_handle(ctx, burner)
+    q = Float64(kw)
+    push!(ctx.commands, HookCommand(OP_SET_FIRE_HRR; target_id=h.id, float_arg=q))
+    set_attr!(ctx, h, :hrr_kw, q)
+    return nothing
+end
+set_fire_hrr!(burner, kw::Real) = set_fire_hrr!(current_ctx(), burner, kw)
+
+"""
+    extinguish_fire!([ctx,] burner)
+
+Immediately ramp fire heat release rate to 0 kW.
+"""
+function extinguish_fire!(ctx::HookContext, burner)
+    h = _resolve_handle(ctx, burner)
+    push!(ctx.commands, HookCommand(OP_EXTINGUISH_FIRE; target_id=h.id))
+    set_attr!(ctx, h, :hrr_kw, 0.0)
+    return nothing
+end
+extinguish_fire!(burner) = extinguish_fire!(current_ctx(), burner)
+
+"""
+    set_vent_flow!([ctx,] vent, volume_m3_s::Real)
+
+Set mechanical exhaust or supply fan volumetric flow rate [m^3/s].
+"""
+function set_vent_flow!(ctx::HookContext, vent, volume_m3_s::Real)
+    h = _resolve_handle(ctx, vent)
+    q = Float64(volume_m3_s)
+    push!(ctx.commands, HookCommand(OP_SET_VENT_FLOW; target_id=h.id, float_arg=q))
+    set_attr!(ctx, h, :flow_rate, q)
+    return nothing
+end
+set_vent_flow!(vent, volume_m3_s::Real) = set_vent_flow!(current_ctx(), vent, volume_m3_s)
+
+"""
+    open_vent!([ctx,] vent)
+
+Open a natural ventilation opening, door, or smoke damper.
+"""
+function open_vent!(ctx::HookContext, vent)
+    h = _resolve_handle(ctx, vent)
+    push!(ctx.commands, HookCommand(OP_OPEN_VENT; target_id=h.id))
+    set_attr!(ctx, h, :is_open, true)
+    return nothing
+end
+open_vent!(vent) = open_vent!(current_ctx(), vent)
+
+"""
+    close_vent!([ctx,] vent)
+
+Close a natural ventilation opening, door, or smoke damper.
+"""
+function close_vent!(ctx::HookContext, vent)
+    h = _resolve_handle(ctx, vent)
+    push!(ctx.commands, HookCommand(OP_CLOSE_VENT; target_id=h.id))
+    set_attr!(ctx, h, :is_open, false)
+    return nothing
+end
+close_vent!(vent) = close_vent!(current_ctx(), vent)
+
+"""
+    activate_suppression!([ctx,] sprinkler_or_zone)
+
+Trigger water spray / sprinkler cooling in target compartment.
+"""
+function activate_suppression!(ctx::HookContext, sprinkler_or_zone)
+    h = _resolve_handle(ctx, sprinkler_or_zone)
+    push!(ctx.commands, HookCommand(OP_ACTIVATE_SUPPRESSION; target_id=h.id))
+    set_attr!(ctx, h, :suppression_active, true)
+    log_event!(ctx, "Suppression activated for $(entity_name(ctx, h))")
+    return nothing
+end
+activate_suppression!(sprinkler_or_zone) = activate_suppression!(current_ctx(), sprinkler_or_zone)
+
+
+# ============================================================================
+# Category 17: Dynamic Visual Overlays & Viewport (:visual_fx)
+# ============================================================================
+
+"""
+    set_agent_color!([ctx,] [agent=item(),] color)
+
+Override agent capsule color (e.g. green for normal, red for alarmed, charcoal for affected).
+"""
+function set_agent_color!(ctx::HookContext, agent, color)
+    h = _resolve_handle(ctx, agent)
+    return set_color!(ctx, h, color)
+end
+set_agent_color!(agent, color) = set_agent_color!(current_ctx(), agent, color)
+set_agent_color!(color) = set_agent_color!(current_ctx(), item(current_ctx()), color)
+
+"""
+    show_agent_bubble!([ctx,] [agent=item(),] text::AbstractString; duration::Real=3.0)
+
+Display floating billboard text bubble above agent's head in 3D viewport.
+"""
+function show_agent_bubble!(ctx::HookContext, agent, text::AbstractString; duration::Real=3.0)
+    h = _resolve_handle(ctx, agent)
+    push!(ctx.commands, HookCommand(OP_SHOW_AGENT_BUBBLE; target_id=h.id, str_arg=string(text), float_arg=Float64(duration)))
+    return nothing
+end
+show_agent_bubble!(agent, text; duration=3.0) = show_agent_bubble!(current_ctx(), agent, text; duration=duration)
+show_agent_bubble!(text; duration=3.0) = show_agent_bubble!(current_ctx(), item(current_ctx()), text; duration=duration)
+
+"""
+    show_agent_path!([ctx,] [agent=item(),] enabled::Bool=true)
+
+Draw real-time breadcrumb spline showing agent's intended navigation path.
+"""
+function show_agent_path!(ctx::HookContext, agent, enabled::Bool=true)
+    h = _resolve_handle(ctx, agent)
+    push!(ctx.commands, HookCommand(OP_SHOW_AGENT_PATH; target_id=h.id, int_arg=enabled ? 1 : 0))
+    return nothing
+end
+show_agent_path!(agent, enabled::Bool) = show_agent_path!(current_ctx(), agent, enabled)
+show_agent_path!(agent::EntityHandle) = show_agent_path!(current_ctx(), agent, true)
+show_agent_path!(enabled::Bool=true) = show_agent_path!(current_ctx(), item(current_ctx()), enabled)
+
+"""
+    set_fluid_colormap!([ctx,] domain, colormap::Union{Symbol, String})
+
+Dynamically switch shader colormap (:inferno, :turbo, :viridis, :fire_smoke).
+"""
+function set_fluid_colormap!(ctx::HookContext, domain, colormap::Union{Symbol, String})
+    push!(ctx.commands, HookCommand(OP_SET_FLUID_COLORMAP; str_arg=string(domain), sym_arg=Symbol(colormap)))
+    return nothing
+end
+set_fluid_colormap!(domain, colormap) = set_fluid_colormap!(current_ctx(), domain, colormap)
+
+"""
+    set_smoke_opacity!([ctx,] domain, factor::Real)
+
+Adjust visual smoke density multiplier in 3D raymarching shader.
+"""
+function set_smoke_opacity!(ctx::HookContext, domain, factor::Real)
+    push!(ctx.commands, HookCommand(OP_SET_SMOKE_OPACITY; str_arg=string(domain), float_arg=Float64(factor)))
+    return nothing
+end
+set_smoke_opacity!(domain, factor::Real) = set_smoke_opacity!(current_ctx(), domain, factor)
+
+"""
+    toggle_fluid_slice!([ctx,] domain; axis::Symbol=:z, pos::Real=1.5, enabled::Bool=true)
+
+Display a 2D scalar cut-plane slice at occupant breathing height in Godot 3D.
+"""
+function toggle_fluid_slice!(ctx::HookContext, domain; axis::Symbol=:z, pos::Real=1.5, enabled::Bool=true)
+    push!(ctx.commands, HookCommand(OP_TOGGLE_FLUID_SLICE; str_arg=string(domain), sym_arg=axis, float_arg=Float64(pos), int_arg=enabled ? 1 : 0))
+    return nothing
+end
+toggle_fluid_slice!(domain; axis=:z, pos=1.5, enabled=true) = toggle_fluid_slice!(current_ctx(), domain; axis=axis, pos=pos, enabled=enabled)
+
+"""
+    flash_alarm_beacon!([ctx,] zone; color=:red, duration::Real=5.0)
+
+Trigger pulsing strobe / siren visual indicator in the 3D scene.
+"""
+function flash_alarm_beacon!(ctx::HookContext, zone; color=:red, duration::Real=5.0)
+    push!(ctx.commands, HookCommand(OP_FLASH_ALARM_BEACON; str_arg=string(zone), sym_arg=Symbol(color), float_arg=Float64(duration)))
+    return nothing
+end
+flash_alarm_beacon!(zone; color=:red, duration=5.0) = flash_alarm_beacon!(current_ctx(), zone; color=color, duration=duration)
+
+"""
+    focus_camera_on!([ctx,] target; zoom::Real=1.5)
+
+Smoothly pan / zoom the 3D viewport camera to highlight critical events.
+"""
+function focus_camera_on!(ctx::HookContext, target; zoom::Real=1.5)
+    h = _resolve_handle(ctx, target)
+    push!(ctx.commands, HookCommand(OP_FOCUS_CAMERA_ON; target_id=h.id, float_arg=Float64(zoom)))
+    return nothing
+end
+focus_camera_on!(target; zoom=1.5) = focus_camera_on!(current_ctx(), target; zoom=zoom)
+
+"""
+    set_hud_banner!([ctx,] message::AbstractString; severity::Symbol=:warning)
+
+Display on-screen status banner in the Godot viewport.
+"""
+function set_hud_banner!(ctx::HookContext, message::AbstractString; severity::Symbol=:warning)
+    push!(ctx.commands, HookCommand(OP_SET_HUD_BANNER; str_arg=string(message), sym_arg=severity))
+    return nothing
+end
+set_hud_banner!(message; severity=:warning) = set_hud_banner!(current_ctx(), message; severity=severity)
+
 # ── Populate Helper Metadata Catalog ─────────────────────────────────────────
 
 function _init_simviz_helper_catalog!()
@@ -3770,6 +4228,47 @@ function _init_simviz_helper_catalog!()
     register_simviz_helper!(:divert_item!, :carrier_cargo, "divert_item!([ctx,] conveyor, item, destination) -> EntityHandle", "Divert item on conveyor to alternate destination", "divert_item!(conv, bag, reject_bin)")
     register_simviz_helper!(:pause_conveyor!, :carrier_cargo, "pause_conveyor!([ctx,] [conveyor=self()])", "Pause motor drive on conveyor", "pause_conveyor!(belt)")
     register_simviz_helper!(:resume_conveyor!, :carrier_cargo, "resume_conveyor!([ctx,] [conveyor=self()])", "Resume motor drive on conveyor", "resume_conveyor!(belt)")
+
+    # Category 15: ABM & Crowd Perception / Control (:crowd) (13)
+    register_simviz_helper!(:agent_position, :crowd, "agent_position([ctx,] [agent=item()]) -> NTuple{3, Float64}", "Current 3D world coordinates (x, y, z) of the crowd agent", "pos = agent_position()")
+    register_simviz_helper!(:agent_speed, :crowd, "agent_speed([ctx,] [agent=item()]) -> Float64", "Current walking speed magnitude [m/s] of the agent", "v = agent_speed()")
+    register_simviz_helper!(:agent_desired_speed, :crowd, "agent_desired_speed([ctx,] [agent=item()]) -> Float64", "Base unhindered desired walking speed v0 [m/s]", "v0 = agent_desired_speed()")
+    register_simviz_helper!(:agent_goal, :crowd, "agent_goal([ctx,] [agent=item()]) -> String", "Target element ID or waypoint coordinate agent is navigating towards", "g = agent_goal()")
+    register_simviz_helper!(:agent_visibility, :crowd, "agent_visibility([ctx,] [agent=item()]) -> Float64", "Effective visual range [m] through local smoke (via Jin's Law)", "vis = agent_visibility()")
+    register_simviz_helper!(:agent_fed, :crowd, "agent_fed([ctx,] [agent=item()]) -> Float64", "Cumulative Fractional Effective Dose (FED) toxic/thermal dose [0, 1]", "dose = agent_fed()")
+    register_simviz_helper!(:agent_in_smoke, :crowd, "agent_in_smoke([ctx,] [agent=item()]) -> Bool", "True if agent is immersed in smoke (K >= 0.1 m^-1)", "if agent_in_smoke(); ...; end")
+    register_simviz_helper!(:set_agent_goal!, :crowd, "set_agent_goal!([ctx,] [agent=item(),] target)", "Reroute agent immediately to target door, room, or waypoint", "set_agent_goal!(\"Exit_North\")")
+    register_simviz_helper!(:set_agent_speed!, :crowd, "set_agent_speed!([ctx,] [agent=item(),] new_v0)", "Override base desired walking speed [m/s]", "set_agent_speed!(1.2)")
+    register_simviz_helper!(:trigger_evacuation!, :crowd, "trigger_evacuation!([ctx,] zone_or_room; exit=nothing)", "Broadcast evacuation alarm to all agents in room/zone", "trigger_evacuation!(\"Concourse_B\")")
+    register_simviz_helper!(:release_from_queue!, :crowd, "release_from_queue!([ctx,] [agent=item()])", "Immediately pull agent out of a stanchion line or waiting lounge", "release_from_queue!()")
+    register_simviz_helper!(:crowd_count, :crowd, "crowd_count([ctx,] zone_or_room) -> Int", "Number of active agents inside concourse, room, or corridor", "n = crowd_count(\"Concourse_B\")")
+    register_simviz_helper!(:crowd_density, :crowd, "crowd_density([ctx,] zone_or_room) -> Float64", "Occupant density [persons/m^2] in specified area", "rho = crowd_density(\"Concourse_B\")")
+
+    # Category 16: Fire & Fluid Dynamics (:fluid) (13)
+    register_simviz_helper!(:fluid_temperature, :fluid, "fluid_temperature([ctx,] [pos_or_elem=self()]) -> Float64", "Local gas temperature [K] at entity or spatial location", "temp = fluid_temperature()")
+    register_simviz_helper!(:smoke_extinction, :fluid, "smoke_extinction([ctx,] [pos_or_elem=self()]) -> Float64", "Light extinction coefficient K [m^-1] at entity or location", "k = smoke_extinction()")
+    register_simviz_helper!(:fluid_velocity, :fluid, "fluid_velocity([ctx,] [pos_or_elem=self()]) -> NTuple{3, Float64}", "Local airflow velocity vector (u, v, w) [m/s]", "vel = fluid_velocity()")
+    register_simviz_helper!(:fluid_visibility, :fluid, "fluid_visibility([ctx,] [pos_or_elem=self()]) -> Float64", "Visual range [m] (V = 3.0 / K for illuminated signs)", "vis = fluid_visibility()")
+    register_simviz_helper!(:fluid_co_ppm, :fluid, "fluid_co_ppm([ctx,] [pos_or_elem=self()]) -> Float64", "Carbon monoxide concentration [ppm] at entity or location", "co = fluid_co_ppm()")
+    register_simviz_helper!(:smoke_layer_height, :fluid, "smoke_layer_height([ctx,] [domain=\"FluidDomain\"]) -> Float64", "Elevation z [m] of the hot descending smoke ceiling layer", "z = smoke_layer_height()")
+    register_simviz_helper!(:is_tenable, :fluid, "is_tenable([ctx,] [pos_or_elem=self()]) -> Bool", "Life-safety check: true if T < 60°C, V >= 10m, FED < 0.1", "ok = is_tenable()")
+    register_simviz_helper!(:set_fire_hrr!, :fluid, "set_fire_hrr!([ctx,] burner, kw::Real)", "Dynamically ramp or throttle fire Heat Release Rate [kW]", "set_fire_hrr!(burner, 250.0)")
+    register_simviz_helper!(:extinguish_fire!, :fluid, "extinguish_fire!([ctx,] burner)", "Immediately ramp fire heat release rate to 0 kW", "extinguish_fire!(burner)")
+    register_simviz_helper!(:set_vent_flow!, :fluid, "set_vent_flow!([ctx,] vent, volume_m3_s::Real)", "Set mechanical fan volumetric flow rate [m^3/s]", "set_vent_flow!(vent, 15.0)")
+    register_simviz_helper!(:open_vent!, :fluid, "open_vent!([ctx,] vent)", "Open a natural ventilation opening, door, or damper", "open_vent!(vent)")
+    register_simviz_helper!(:close_vent!, :fluid, "close_vent!([ctx,] vent)", "Close a natural ventilation opening, door, or damper", "close_vent!(vent)")
+    register_simviz_helper!(:activate_suppression!, :fluid, "activate_suppression!([ctx,] sprinkler_or_zone)", "Trigger water spray / sprinkler cooling in target compartment", "activate_suppression!(sprinkler)")
+
+    # Category 17: Dynamic Visual Overlays & Viewport (:visual_fx) (9)
+    register_simviz_helper!(:set_agent_color!, :visual_fx, "set_agent_color!([ctx,] [agent=item(),] color)", "Override agent capsule color (e.g. green, red, charcoal)", "set_agent_color!(:red)")
+    register_simviz_helper!(:show_agent_bubble!, :visual_fx, "show_agent_bubble!([ctx,] [agent=item(),] text; duration=3.0)", "Display floating billboard text bubble above agent in 3D", "show_agent_bubble!(\"Evacuating!\")")
+    register_simviz_helper!(:show_agent_path!, :visual_fx, "show_agent_path!([ctx,] [agent=item(),] enabled=true)", "Draw real-time breadcrumb spline of agent's path", "show_agent_path!(true)")
+    register_simviz_helper!(:set_fluid_colormap!, :visual_fx, "set_fluid_colormap!([ctx,] domain, colormap::Symbol)", "Switch shader colormap (:inferno, :turbo, :viridis, :fire_smoke)", "set_fluid_colormap!(\"FluidDomain\", :inferno)")
+    register_simviz_helper!(:set_smoke_opacity!, :visual_fx, "set_smoke_opacity!([ctx,] domain, factor::Real)", "Adjust visual smoke density multiplier in 3D raymarching shader", "set_smoke_opacity!(\"FluidDomain\", 1.5)")
+    register_simviz_helper!(:toggle_fluid_slice!, :visual_fx, "toggle_fluid_slice!([ctx,] domain; axis=:z, pos=1.5, enabled=true)", "Display a 2D scalar cut-plane slice at breathing height", "toggle_fluid_slice!(\"FluidDomain\", pos=1.5)")
+    register_simviz_helper!(:flash_alarm_beacon!, :visual_fx, "flash_alarm_beacon!([ctx,] zone; color=:red, duration=5.0)", "Trigger pulsing strobe/siren visual indicator in 3D", "flash_alarm_beacon!(\"Concourse_B\", color=:red)")
+    register_simviz_helper!(:focus_camera_on!, :visual_fx, "focus_camera_on!([ctx,] target; zoom=1.5)", "Smoothly pan/zoom 3D viewport camera to highlight critical events", "focus_camera_on!(\"Exit_North\")")
+    register_simviz_helper!(:set_hud_banner!, :visual_fx, "set_hud_banner!([ctx,] message; severity=:warning)", "Display on-screen status banner in the Godot viewport", "set_hud_banner!(\"FIRE ALARM ACTIVATED\", severity=:danger)")
     return nothing
 end
 _init_simviz_helper_catalog!()
@@ -3877,7 +4376,19 @@ module SimViz
         load_item!, unload_item!, unload_all!, is_loading, loaded_items, cargo_count, carrier_of,
         bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
         items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
-        pause_conveyor!, resume_conveyor!
+        pause_conveyor!, resume_conveyor!,
+        # Category 15: ABM & Crowd Perception / Control
+        agent_position, agent_speed, agent_desired_speed, agent_goal, agent_visibility,
+        agent_fed, agent_in_smoke, set_agent_goal!, set_agent_speed!, trigger_evacuation!,
+        release_from_queue!, crowd_count, crowd_density,
+        # Category 16: Fire & Fluid Dynamics
+        fluid_temperature, smoke_extinction, fluid_velocity, fluid_visibility, fluid_co_ppm,
+        smoke_layer_height, is_tenable, set_fire_hrr!, extinguish_fire!, set_vent_flow!,
+        open_vent!, close_vent!, activate_suppression!,
+        # Category 17: Dynamic Visual Overlays & Viewport
+        set_agent_color!, show_agent_bubble!, show_agent_path!, set_fluid_colormap!,
+        set_smoke_opacity!, toggle_fluid_slice!, flash_alarm_beacon!, focus_camera_on!,
+        set_hud_banner!
 
     export EntityHandle, INVALID_HANDLE, EntityKinematics, PortDescriptor, PortWireLink,
         PortDirectory, UserTelemetryStore, EntityStateView,
@@ -3930,5 +4441,17 @@ module SimViz
         load_item!, unload_item!, unload_all!, is_loading, loaded_items, cargo_count, carrier_of,
         bind_token!, binding_key, is_bound_to, find_matching_item, pull_matching_token!,
         items_on_conveyor, item_position_on_conveyor, item_distance_to_outlet, divert_item!,
-        pause_conveyor!, resume_conveyor!
+        pause_conveyor!, resume_conveyor!,
+        # Category 15: ABM & Crowd Perception / Control
+        agent_position, agent_speed, agent_desired_speed, agent_goal, agent_visibility,
+        agent_fed, agent_in_smoke, set_agent_goal!, set_agent_speed!, trigger_evacuation!,
+        release_from_queue!, crowd_count, crowd_density,
+        # Category 16: Fire & Fluid Dynamics
+        fluid_temperature, smoke_extinction, fluid_velocity, fluid_visibility, fluid_co_ppm,
+        smoke_layer_height, is_tenable, set_fire_hrr!, extinguish_fire!, set_vent_flow!,
+        open_vent!, close_vent!, activate_suppression!,
+        # Category 17: Dynamic Visual Overlays & Viewport
+        set_agent_color!, show_agent_bubble!, show_agent_path!, set_fluid_colormap!,
+        set_smoke_opacity!, toggle_fluid_slice!, flash_alarm_beacon!, focus_camera_on!,
+        set_hud_banner!
 end

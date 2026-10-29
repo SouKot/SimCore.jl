@@ -168,9 +168,15 @@ function throttle!(clock::SimClock, next_sim_time::Float64)
     isinf(clock.speed_factor) && return
 
     # ── Throttled mode: sleep if we are ahead of schedule
+    now_t         = time()
     expected_wall = clock.wall_origin + next_sim_time / clock.speed_factor
-    remaining     = expected_wall - time()
-    remaining > 0.001 && sleep(remaining)   # only sleep if meaningfully ahead
+    remaining     = expected_wall - now_t
+    if remaining > 0.001
+        sleep(remaining)   # only sleep if meaningfully ahead
+    elseif remaining < -0.25 && clock.speed_factor > 0.0
+        # Resynchronize wall origin if lagging by >250ms (e.g., after compilation or window drag)
+        clock.wall_origin = now_t - (next_sim_time / clock.speed_factor)
+    end
 
     return
 end

@@ -554,3 +554,148 @@ function mark_departure!(transport::AbstractSyncTransport,
     push!(bufs.pending_departures, convert(eltype(bufs.pending_departures), agent_index))
     return true
 end
+
+# ── Fluid ↔ Crowd ↔ DES Multi-Physics Synchronization (Phase P4) ─────────────
+
+"""
+    FluidSyncConfig{F<:AbstractFloat}
+
+Configuration for Fluid ↔ Crowd ↔ DES multi-physics coupling synchronization (Phase P4).
+
+# Fields
+- `dt::F`: Fluid sub-stepping limit or base coupling timestep.
+- `Δt_sync::F`: Coupling exchange cadence in simulated time (e.g. 0.1 s).
+- `sample_height::F`: Breathing elevation offset above floor for 2D agents (default 1.8 m).
+- `enable_one_way::Bool`: Trilinear sampling of hazards (T, soot, FED, u) -> agent speed & tenability (default true).
+- `enable_two_way::Bool`: Scatter occupant heat and CO2 back into Eulerian CFD grid (default true).
+- `enable_des_coupling::Bool`: Virtual sensors trip SimDES events, and SimDES commands actuate vents/doors (default true).
+- `occupant_heat_watts::F`: Sensible metabolic heat release rate per occupant (default 120.0 W).
+- `occupant_co2_gps::F`: Exhaled CO2 mass generation rate per occupant (default 0.008 g/s).
+- `purser_toxic_enabled::Bool`: Track Purser toxic FED (CO, HCN, CO2 hyperventilation factor).
+- `purser_thermal_enabled::Bool`: Track Purser thermal convection/radiation dose.
+- `jin_visibility_enabled::Bool`: Evaluate Jin visibility and walking speed degradation.
+"""
+struct FluidSyncConfig{F<:AbstractFloat}
+    dt                     :: F
+    Δt_sync                :: F
+    sample_height          :: F
+    enable_one_way         :: Bool
+    enable_two_way         :: Bool
+    enable_des_coupling    :: Bool
+    occupant_heat_watts    :: F
+    occupant_co2_gps       :: F
+    purser_toxic_enabled   :: Bool
+    purser_thermal_enabled :: Bool
+    jin_visibility_enabled :: Bool
+end
+
+"""
+    FluidSyncConfig(; kwargs...) -> FluidSyncConfig{Float64}
+
+Construct a validated fluid sync configuration with standard fire engineering defaults.
+"""
+function FluidSyncConfig(;
+    dt::Real = 0.05,
+    Δt_sync::Real = 0.1,
+    sample_height::Real = 1.8,
+    enable_one_way::Bool = true,
+    enable_two_way::Bool = true,
+    enable_des_coupling::Bool = true,
+    occupant_heat_watts::Real = 120.0,
+    occupant_co2_gps::Real = 0.008,
+    purser_toxic_enabled::Bool = true,
+    purser_thermal_enabled::Bool = true,
+    jin_visibility_enabled::Bool = true
+)
+    F = Float64
+    cfg = FluidSyncConfig{F}(
+        F(dt),
+        F(Δt_sync),
+        F(sample_height),
+        enable_one_way,
+        enable_two_way,
+        enable_des_coupling,
+        F(occupant_heat_watts),
+        F(occupant_co2_gps),
+        purser_toxic_enabled,
+        purser_thermal_enabled,
+        jin_visibility_enabled
+    )
+    return validate_fluid_sync_config(cfg)
+end
+
+"""
+    validate_fluid_sync_config(cfg::FluidSyncConfig) -> FluidSyncConfig
+
+Validate fluid sync invariants. Throws `ArgumentError` on invalid parameters.
+"""
+function validate_fluid_sync_config(cfg::FluidSyncConfig{F}) where {F<:AbstractFloat}
+    cfg.dt > zero(F) || throw(ArgumentError("dt must be > 0, got $(cfg.dt)"))
+    cfg.Δt_sync > zero(F) || throw(ArgumentError("Δt_sync must be > 0, got $(cfg.Δt_sync)"))
+    cfg.sample_height >= zero(F) || throw(ArgumentError("sample_height must be >= 0, got $(cfg.sample_height)"))
+    cfg.occupant_heat_watts >= zero(F) || throw(ArgumentError("occupant_heat_watts must be >= 0, got $(cfg.occupant_heat_watts)"))
+    cfg.occupant_co2_gps >= zero(F) || throw(ArgumentError("occupant_co2_gps must be >= 0, got $(cfg.occupant_co2_gps)"))
+    return cfg
+end
+
+"""
+    FluidSyncBuffers{F<:AbstractFloat}
+
+Data buffers for multi-physics synchronization between fluid, crowd ABM, and SimDES domains.
+"""
+mutable struct FluidSyncBuffers{F<:AbstractFloat}
+    max_agents             :: Int
+    # Per-agent sampled hazard quantities
+    agent_temperatures     :: Vector{F}
+    agent_visibilities     :: Vector{F}
+    agent_speed_factors    :: Vector{F}
+    agent_fed_toxic        :: Vector{F}
+    agent_fed_heat         :: Vector{F}
+    agent_incapacitated    :: Vector{Bool}
+    # Per-agent position input buffer (x, y, z)
+    agent_coords           :: Matrix{F}  # 3 × max_agents
+    # Actuator states from SimDES to fluid domain (e.g. :door_open, :fan_speed, :damper_pos)
+    actuator_states        :: Dict{Symbol, Any}
+    # Pending detector events from fluid domain to SimDES (sensor_name => trip_time)
+    tripped_detectors      :: Vector{Pair{Symbol, F}}
+end
+
+"""
+    FluidSyncBuffers(max_agents::Int; F::Type{<:AbstractFloat}=Float32) -> FluidSyncBuffers
+
+Allocate host sync buffers for `max_agents` crowd agents.
+"""
+function FluidSyncBuffers(max_agents::Int; F::Type{<:AbstractFloat}=Float32)
+    max_agents > 0 || throw(ArgumentError("max_agents must be > 0, got $max_agents"))
+    return FluidSyncBuffers{F}(
+        max_agents,
+        fill(F(293.15), max_agents),
+        fill(F(30.0), max_agents),
+        fill(F(1.0), max_agents),
+        zeros(F, max_agents),
+        zeros(F, max_agents),
+        fill(false, max_agents),
+        zeros(F, 3, max_agents),
+        Dict{Symbol, Any}(),
+        Pair{Symbol, F}[]
+    )
+end
+
+"""
+    reset_fluid_sync_buffers!(bufs::FluidSyncBuffers) -> bufs
+
+Reset all fluid coupling buffers in-place.
+"""
+function reset_fluid_sync_buffers!(bufs::FluidSyncBuffers{F}) where {F}
+    fill!(bufs.agent_temperatures, F(293.15))
+    fill!(bufs.agent_visibilities, F(30.0))
+    fill!(bufs.agent_speed_factors, F(1.0))
+    fill!(bufs.agent_fed_toxic, zero(F))
+    fill!(bufs.agent_fed_heat, zero(F))
+    fill!(bufs.agent_incapacitated, false)
+    fill!(bufs.agent_coords, zero(F))
+    empty!(bufs.actuator_states)
+    empty!(bufs.tripped_detectors)
+    return bufs
+end
+
