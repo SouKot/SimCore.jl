@@ -6,6 +6,7 @@ authors = ["Sourabh Kotnala <sauravkotnala@gmail.com>"]
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 # ── Accelerated statistics extension (optional) ──────────────────────────────
@@ -39,8 +40,7 @@ AcceleratedKernels = "6a4ca0a5-0e36-4168-a932-d9be78d558f1"
 Aqua               = "4c88cf16-eb10-579e-8560-4a9242c79595"
 CUDA               = "052768ef-5323-5732-b1bb-66c8b64840ba"  # optional: load to use CUDA backend
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
-Random             = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Test               = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["AcceleratedKernels", "Aqua", "CUDA", "KernelAbstractions", "Random", "Test"]
+test = ["AcceleratedKernels", "Aqua", "CUDA", "KernelAbstractions", "Test"]

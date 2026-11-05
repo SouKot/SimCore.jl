@@ -19,10 +19,12 @@ Provides:
 module SimCore
 
 using DataStructures: PriorityQueue, enqueue!, dequeue!, dequeue_pair!, peek, isempty
+using Random: AbstractRNG, Xoshiro
 using StaticArrays: SVector
 
 # ── Source files (order matters: dependencies first) ─────────────────────────
 include("events.jl")
+include("time_key.jl")
 include("clock.jl")
 include("components.jl")
 include("hybrid_sync.jl")
@@ -34,6 +36,7 @@ include("stats.jl")      # SimStats (legacy) — must be defined before SimWorld
 include("world.jl")
 include("simviz_helpers.jl")
 include("tables/sim_table.jl")
+include("hardware_planner.jl")
 
 # ── Public API exports ────────────────────────────────────────────────────────
 
@@ -43,6 +46,9 @@ export EntityArrival, ProcessComplete, ResourceFailure, ScheduledChange,
        TransferOut, NullEvent, CustomUserEvent,
        LoadingStart, LoadingComplete, UnloadingStart, UnloadingComplete
 export CancellableEvent, cancel!, next_event_id!, is_cancelled
+export PICOSECONDS_PER_SEC, SEC_PER_PICOSECOND, to_picoseconds, from_picoseconds,
+       EventKey, default_event_priority_eps, default_event_zone
+export enable_zone_rngs!, disable_zone_rngs!, get_zone_rng, next_zone_event_seq!
 
 # Clock
 export SimClock, throttle!, pause!, unpause!, set_speed!, step_once!, reset!,
@@ -121,6 +127,12 @@ export check_littles_law, batch_means_ci, replicate, replicate_parallel
 # Accelerated extension (SimCoreGPUExt) — available when AcceleratedKernels +
 # KernelAbstractions are loaded.  Works on CPU threads AND all GPU backends.
 export gpu_mean_var, gpu_histogram
+
+# ── Phase 4: Hardware Assessment & Multi-Paradigm Resource Arbitrator ─────────
+export HardwareProfile, detect_physical_cores, detect_cpu_cache_hierarchy,
+       calibrate_cpu_roofline, probe_hardware,
+       WorkloadProfile, ExecutionOverrides, ExecutionPlan,
+       estimate_fluid_step_cost_us, arbitrate_execution_plan, execution_plan_to_dict
 
 # ── Accelerated-extension stubs (methods added by SimCoreGPUExt) ───────────────
 """

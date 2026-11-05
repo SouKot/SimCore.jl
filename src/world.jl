@@ -210,18 +210,24 @@ mutable struct SimWorld
     zone_setup_time        :: Dict{Tuple{Int, UInt64}, Float64}
     active_user_events     :: Dict{Int, Set{UInt64}}
     entity_type_templates  :: Dict{Symbol, Dict{String, Any}}
-    carrier_cargo          :: Dict{UInt64, Vector{UInt64}}
-    cargo_carrier          :: Dict{UInt64, UInt64}
-    token_bindings         :: Dict{UInt64, String}
-    active_loading         :: Dict{UInt64, Tuple{UInt64, Int, Float64}}
+    carrier_cargo              :: Dict{UInt64, Vector{UInt64}}
+    cargo_carrier              :: Dict{UInt64, UInt64}
+    token_bindings             :: Dict{UInt64, String}
+    active_loading             :: Dict{UInt64, Tuple{UInt64, Int, Float64}}
+    master_seed                :: UInt64
+    use_zone_rngs              :: Bool
+    zone_rngs                  :: Dict{Int, Xoshiro}
+    zone_event_seqs            :: Dict{Int, UInt64}
+    zone_entity_seqs           :: Dict{Int, UInt64}
+    use_partitioned_entity_ids :: Bool
 end
 
 """
-    SimWorld() -> SimWorld
+    SimWorld(; seed::Integer = 42, use_zone_rngs::Bool = false, use_partitioned_entity_ids::Bool = false) -> SimWorld
 
 Create an empty simulation world with no entities.
 """
-function SimWorld()
+function SimWorld(; seed::Integer = 42, use_zone_rngs::Bool = false, use_partitioned_entity_ids::Bool = false)
     SimWorld(
         Threads.Atomic{UInt64}(0),
         Dict{UInt64, DESAgent}(),
@@ -255,19 +261,99 @@ function SimWorld()
         Dict{UInt64, UInt64}(),
         Dict{UInt64, String}(),
         Dict{UInt64, Tuple{UInt64, Int, Float64}}(),
+        UInt64(seed),
+        use_zone_rngs,
+        Dict{Int, Xoshiro}(),
+        Dict{Int, UInt64}(),
+        Dict{Int, UInt64}(),
+        use_partitioned_entity_ids,
     )
 end
 
-# ── Entity ID management ───────────────────────────────────────────────────────
+# ── Entity ID & Per-Zone RNG / Sequence Management ────────────────────────────
 
 """
-    new_entity_id!(world) -> UInt64
+    new_entity_id!(world, zone_id = 0) -> UInt64
 
 Generate and return a new unique entity ID.
-Thread-safe monotonic counter.
+When `world.use_partitioned_entity_ids == true` and `zone_id > 0`, generates a
+partition-local deterministic ID `((zone_id & 0x03FF) << 20) | (seq & 0x000FFFFF)`
+that fits inside positive `Int32` (`EntityHandle` compatible) and is 100% invariant
+to thread scheduling across SubModels.
 """
-new_entity_id!(world::SimWorld) =
-    Threads.atomic_add!(world._next_entity_id, UInt64(1)) + UInt64(1)
+function new_entity_id!(world::SimWorld, zone_id::Int = 0)::UInt64
+    if world.use_partitioned_entity_ids && zone_id > 0
+        seq = get(world.zone_entity_seqs, zone_id, UInt64(0)) + UInt64(1)
+        world.zone_entity_seqs[zone_id] = seq
+        return ((UInt64(zone_id & 0x03FF)) << 20) | (seq & UInt64(0x000FFFFF))
+    end
+    return Threads.atomic_add!(world._next_entity_id, UInt64(1)) + UInt64(1)
+end
+
+"""
+    enable_zone_rngs!(world::SimWorld; seed::Integer = world.master_seed, partitioned_entity_ids::Bool = false) -> SimWorld
+
+Enable deterministic per-zone `Xoshiro` RNG streams seeded by `hash(UInt64(seed), UInt64(zone_id))`.
+Re-seeds all currently registered zones and clears per-zone sequence counters.
+"""
+function enable_zone_rngs!(world::SimWorld; seed::Integer = world.master_seed, partitioned_entity_ids::Bool = false)
+    world.master_seed = UInt64(seed)
+    world.use_zone_rngs = true
+    world.use_partitioned_entity_ids = partitioned_entity_ids
+    empty!(world.zone_rngs)
+    empty!(world.zone_event_seqs)
+    empty!(world.zone_entity_seqs)
+    for zid in keys(world.zone_states)
+        world.zone_rngs[zid] = Xoshiro(hash(world.master_seed, UInt64(zid)))
+        world.zone_event_seqs[zid] = UInt64(0)
+        world.zone_entity_seqs[zid] = UInt64(0)
+    end
+    return world
+end
+
+"""
+    disable_zone_rngs!(world::SimWorld) -> SimWorld
+
+Disable per-zone RNG override so callers fall back to their passed-in `rng`.
+"""
+function disable_zone_rngs!(world::SimWorld)
+    world.use_zone_rngs = false
+    world.use_partitioned_entity_ids = false
+    return world
+end
+
+"""
+    get_zone_rng(world::SimWorld, zone_id::Int, fallback_rng::AbstractRNG) -> AbstractRNG
+    get_zone_rng(world::SimWorld, zone_id::Int) -> Xoshiro
+
+Return the deterministic `Xoshiro` RNG stream for `zone_id` when `world.use_zone_rngs == true`
+and `zone_id > 0`, or `fallback_rng` otherwise.
+"""
+@inline function get_zone_rng(world::SimWorld, zone_id::Int, fallback_rng::AbstractRNG)::AbstractRNG
+    if world.use_zone_rngs && zone_id > 0
+        return get!(world.zone_rngs, zone_id) do
+            Xoshiro(hash(world.master_seed, UInt64(zone_id)))
+        end
+    end
+    return fallback_rng
+end
+
+@inline function get_zone_rng(world::SimWorld, zone_id::Int)::Xoshiro
+    return get!(world.zone_rngs, zone_id) do
+        Xoshiro(hash(world.master_seed, UInt64(zone_id)))
+    end
+end
+
+"""
+    next_zone_event_seq!(world::SimWorld, zone_id::Int) -> UInt64
+
+Increment and return the monotonic event sequence counter for `zone_id`.
+"""
+@inline function next_zone_event_seq!(world::SimWorld, zone_id::Int)::UInt64
+    seq = get(world.zone_event_seqs, zone_id, UInt64(0)) + UInt64(1)
+    world.zone_event_seqs[zone_id] = seq
+    return seq
+end
 
 # ── Entity add / remove ────────────────────────────────────────────────────────
 
@@ -406,6 +492,11 @@ function add_zone!(world::SimWorld, zone_id::Int;
                    capacity::Int    = typemax(Int),
                    num_servers::Int = 1)
     world.zone_states[zone_id] = ZoneState(; capacity, num_servers)
+    if world.use_zone_rngs && !haskey(world.zone_rngs, zone_id)
+        world.zone_rngs[zone_id] = Xoshiro(hash(world.master_seed, UInt64(zone_id)))
+        world.zone_event_seqs[zone_id] = UInt64(0)
+        world.zone_entity_seqs[zone_id] = UInt64(0)
+    end
     return world
 end
 
